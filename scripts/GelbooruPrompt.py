@@ -36,6 +36,7 @@ LOCALE = {
         'error_post_not_found': 'Пост не найден',
         'error_invalid_id': 'Не удалось распознать ID поста. Укажите ссылку вида https://gelbooru.com/index.php?page=post&s=view&id=123456 или просто число',
         'error_post_not_found_id': 'Пост с ID {id} не найден',
+        'error_gelbooru_blocked': 'Не возможно получить доступ к gelbooru.com, если вы из России, вам нужно включить желательно VPN ! Так как данная платформа не доступна на территории российской федерации! Если вы не из России и видите это сообщение то это означает что данная платформа не доступна и в вашей стране и вам тоже нужно включить VPN! Если не помогает VPN, это означает что на данный момент проблемы на стороне самого сервиса Gelbooru !',
         'success': 'Успешно',
         'placeholder_include': 'например: 1girl, blue_hair, solo',
         'placeholder_exclude': 'например: nsfw, text, watermark',
@@ -65,6 +66,7 @@ LOCALE = {
         'error_post_not_found': 'Post not found',
         'error_invalid_id': 'Could not parse post ID. Provide a link like https://gelbooru.com/index.php?page=post&s=view&id=123456 or just the number',
         'error_post_not_found_id': 'Post with ID {id} not found',
+        'error_gelbooru_blocked': 'Cannot access gelbooru.com. If you are from Russia, please enable VPN, as this platform is blocked in the Russian Federation. If you are not from Russia and see this message, it means the platform is also unavailable in your country, please enable VPN. If VPN does not help, it means there are issues on Gelbooru\'s side.',
         'success': 'Success',
         'placeholder_include': 'e.g. 1girl, blue_hair, solo',
         'placeholder_exclude': 'e.g. nsfw, text, watermark',
@@ -164,6 +166,9 @@ async def get_random_tags(include, exclude):
             else:
                 return f"{L['error_gelbooru']}{e}", None, L['error_post_not_found']
         except Exception as e:
+            error_msg = str(e)
+            if "Cannot connect to host gelbooru.com" in error_msg or "WRONG_VERSION_NUMBER" in error_msg:
+                return L['error_gelbooru_blocked'], None, L['error_post_not_found']
             return f"{L['error_unexpected']}{e}", None, L['error_post_not_found']
         attempt += 1
 
@@ -227,6 +232,9 @@ async def get_post_by_url(post_input):
         else:
             return f"{L['error_gelbooru']}{e}", None, None, L['error_post_not_found']
     except Exception as e:
+        error_msg = str(e)
+        if "Cannot connect to host gelbooru.com" in error_msg or "WRONG_VERSION_NUMBER" in error_msg:
+            return L['error_gelbooru_blocked'], None, None, L['error_post_not_found']
         return f"{L['error_unexpected']}{e}", None, None, L['error_post_not_found']
 
     raw_tags = gel_post.get_tags()
