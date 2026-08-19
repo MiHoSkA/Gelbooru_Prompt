@@ -119,8 +119,12 @@ async def fetch_image(session, url, timeout=60):
 def filter_tags(tags, ignore_list):
     if not ignore_list:
         return tags
-    ignore_normalized = [tag.strip().replace(' ', '_') for tag in ignore_list if tag.strip()]
-    return [tag for tag in tags if tag not in ignore_normalized]
+    ignore_normalized = []
+    for tag in ignore_list:
+        tag = tag.strip().lower().replace(' ', '_')
+        if tag:
+            ignore_normalized.append(tag)
+    return [tag for tag in tags if tag.lower().replace(' ', '_') not in ignore_normalized]
 
 async def get_random_tags(include, exclude):
     lang = getattr(shared.opts, 'gpr_language', 'ru')
