@@ -94,12 +94,25 @@ def save_seen_ids(ids):
     except Exception as e:
         print(f"Ошибка сохранения просмотренных постов: {e}")
 
+def _get_proxy():
+    if not getattr(shared.opts, 'gpr_proxy_enabled', False):
+        return None
+    url = getattr(shared.opts, 'gpr_proxy_url', '').strip()
+    if not url:
+        return None
+    if url.startswith('socks5://'):
+        print("SOCKS5 прокси не поддерживается, используйте HTTP/HTTPS.")
+        return None
+    return url
+
 async def fetch_image(session, url, timeout=60):
     headers = {
         'Referer': 'https://gelbooru.com/'
     }
+    proxy_url = _get_proxy()
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout),
+                               proxy=proxy_url) as resp:
             if resp.status == 200:
                 data = await resp.read()
                 img = Image.open(io.BytesIO(data))
@@ -347,6 +360,12 @@ class GPRScript(scripts.Script):
                 "ru", "Язык интерфейса / Interface language",
                 gr.Radio,
                 component_args={"choices": ["ru", "en"]}
+            ),
+            "gpr_proxy_enabled": shared.OptionInfo(
+                False, "Включить прокси"
+            ),
+            "gpr_proxy_url": shared.OptionInfo(
+                "", "URL прокси (например, http://user:pass@host:port)", gr.Textbox
             ),
         }
 

@@ -11,14 +11,13 @@ import aiohttp
 import xmltodict
 from furl import furl
 
+from modules import shared
 
 class GelbooruException(Exception):
     pass
 
-
 class GelbooruNotFoundException(GelbooruException):
     pass
-
 
 class GelbooruImage:
 
@@ -77,13 +76,23 @@ class Gelbooru:
                  user_id: Optional[str] = None,
                  loop: Optional[asyncio.AbstractEventLoop] = None,
                  api: Optional[str] = API_GELBOORU,
-                 timeout: int = 60):  # Добавлен параметр таймаута
+                 timeout: int = 60):
 
         self._api_key = api_key
         self._user_id = user_id
         self._loop = loop
         self._base_url = api
-        self._timeout = aiohttp.ClientTimeout(total=timeout)  # Таймаут на весь запрос
+        self._timeout = aiohttp.ClientTimeout(total=timeout)
+
+    def _get_proxy_settings(self):
+        if not getattr(shared.opts, 'gpr_proxy_enabled', False):
+            return None
+        proxy_url = getattr(shared.opts, 'gpr_proxy_url', '').strip()
+        if not proxy_url:
+            return None
+        if proxy_url.startswith('socks5://'):
+            raise GelbooruException("SOCKS5 прокси не поддерживается, используйте HTTP/HTTPS прокси.")
+        return proxy_url
 
     async def get_post(self, post_id: int) -> Optional[GelbooruImage]:
 
@@ -178,17 +187,17 @@ class Gelbooru:
         return tags + exclude_tags
 
     async def _request(self, url: str) -> bytes:
-        # Заголовки для имитации браузера
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1'
         }
+        proxy_url = self._get_proxy_settings()
+
         async with aiohttp.ClientSession(loop=self._loop, headers=headers) as session:
-            status_code, response = await self._fetch(session, url)
+            status_code, response = await self._fetch(session, url, proxy=proxy_url)
 
         if status_code == 401:
             raise GelbooruException("Gelbooru код ошибкий 401, вам необходимо войти в свою учетную запись")
@@ -197,8 +206,8 @@ class Gelbooru:
 
         return response
 
-    async def _fetch(self, session: aiohttp.ClientSession, url) -> Tuple[int, bytes]:
-        async with session.get(url, timeout=self._timeout) as response:
+    async def _fetch(self, session: aiohttp.ClientSession, url, proxy=None) -> Tuple[int, bytes]:
+        async with session.get(url, timeout=self._timeout, proxy=proxy) as response:
             return response.status, await response.read()
 
 
