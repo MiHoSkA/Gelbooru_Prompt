@@ -41,6 +41,18 @@ LOCALE = {
         'placeholder_include': 'например: 1girl, blue_hair, solo',
         'placeholder_exclude': 'например: nsfw, text, watermark',
         'placeholder_post_input': 'https://gelbooru.com/index.php?page=post&s=view&id=123456 или просто 123456',
+        'setting_api_key_label': 'API ключ',
+        'setting_api_key_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" target="_blank">Настройки аккаунта</a>',
+        'setting_user_id_label': 'ID пользователя',
+        'setting_user_id_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" target="_blank">Настройки аккаунта</a>',
+        'setting_replace_underscores_label': 'Заменять подчёркивания на пробелы при вставке',
+        'setting_exclusion_list_label': 'Список исключений для замены подчёркиваний',
+        'setting_exclusion_list_info': 'Укажите теги, в которых не нужно заменять подчёркивания на пробелы, через запятую.',
+        'setting_ignore_tags_label': 'Игнорируемые теги (не показывать)',
+        'setting_ignore_tags_info': 'Укажите теги, которые будут удалены из результата (не влияют на поиск). Через запятую, можно с пробелами или подчёркиваниями.',
+        'setting_language_label': 'Язык интерфейса / Interface language',
+        'setting_proxy_enabled_label': 'Включить прокси',
+        'setting_proxy_url_label': 'URL прокси (например, http://user:pass@host:port)',
     },
     'en': {
         'title': 'Gelbooru',
@@ -71,6 +83,18 @@ LOCALE = {
         'placeholder_include': 'e.g. 1girl, blue_hair, solo',
         'placeholder_exclude': 'e.g. nsfw, text, watermark',
         'placeholder_post_input': 'https://gelbooru.com/index.php?page=post&s=view&id=123456 or just 123456',
+        'setting_api_key_label': 'API key',
+        'setting_api_key_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" target="_blank">Account settings</a>',
+        'setting_user_id_label': 'User ID',
+        'setting_user_id_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" target="_blank">Account settings</a>',
+        'setting_replace_underscores_label': 'Replace underscores with spaces on insert',
+        'setting_exclusion_list_label': 'Exclusion list for underscore replacement',
+        'setting_exclusion_list_info': 'Specify tags where underscores should NOT be replaced with spaces, separated by commas.',
+        'setting_ignore_tags_label': 'Ignored tags (do not show)',
+        'setting_ignore_tags_info': 'Specify tags to remove from the result (does not affect search). Separated by commas, with spaces or underscores allowed.',
+        'setting_language_label': 'Язык интерфейса / Interface language',
+        'setting_proxy_enabled_label': 'Enable proxy',
+        'setting_proxy_url_label': 'Proxy URL (e.g., http://user:pass@host:port)',
     }
 }
 
@@ -140,7 +164,7 @@ def filter_tags(tags, ignore_list):
     return [tag for tag in tags if tag.lower().replace(' ', '_') not in ignore_normalized]
 
 async def get_random_tags(include, exclude):
-    lang = getattr(shared.opts, 'gpr_language', 'ru')
+    lang = getattr(shared.opts, 'gpr_language', 'en')
     L = LOCALE[lang]
 
     include = include.replace(" ", "")
@@ -215,7 +239,7 @@ async def get_random_tags(include, exclude):
     return ', '.join(final_tags), preview, str(gel_post)
 
 async def get_post_by_url(post_input):
-    lang = getattr(shared.opts, 'gpr_language', 'ru')
+    lang = getattr(shared.opts, 'gpr_language', 'en')
     L = LOCALE[lang]
 
     api_key = getattr(shared.opts, "gpr_api_key", None)
@@ -283,7 +307,7 @@ class GPRScript(scripts.Script):
         return scripts.AlwaysVisible
 
     def ui(self, is_img2img):
-        lang = getattr(shared.opts, 'gpr_language', 'ru')
+        lang = getattr(shared.opts, 'gpr_language', 'en')
         L = LOCALE[lang]
 
         with gr.Accordion(L['title'], open=False):
@@ -339,33 +363,36 @@ class GPRScript(scripts.Script):
                 manual_tags_textbox, manual_preview_image, manual_url_textbox, manual_status_textbox]
 
     def on_ui_settings():
+        lang = getattr(shared.opts, 'gpr_language', 'en')
+        L = LOCALE[lang]
+
         GPR_SECTION = ("gpr", "Gelbooru Prompt")
 
         gpr_options = {
             "gpr_api_key": shared.OptionInfo(
-                "", "API ключ", gr.Textbox
-            ).info("<a href=\"https://gelbooru.com/index.php?page=account&s=options\" target=\"_blank\">Настройки аккаунта</a>"),
+                "", L['setting_api_key_label'], gr.Textbox
+            ).info(L['setting_api_key_info']),
             "gpr_user_id": shared.OptionInfo(
-                "", "ID пользователя", gr.Textbox
-            ).info("<a href=\"https://gelbooru.com/index.php?page=account&s=options\" target=\"_blank\">Настройки аккаунта</a>"),
-            "gpr_replaceUnderscores": shared.OptionInfo(True, "Заменять подчёркивания на пробелы при вставке"),
+                "", L['setting_user_id_label'], gr.Textbox
+            ).info(L['setting_user_id_info']),
+            "gpr_replaceUnderscores": shared.OptionInfo(True, L['setting_replace_underscores_label']),
             "gpr_undersocreReplacementExclusionList": shared.OptionInfo(
                 "0_0,(o)_(o),+_+,+_-,._.,<o>_<o>,<|>_<|>,=_=,>_<,3_3,6_9,>_o,@_@,^_^,o_o,u_u,x_x,|_|,||_||",
-                "Список исключений для замены подчёркиваний"
-            ).info("Укажите теги, в которых не нужно заменять подчёркивания на пробелы, через запятую."),
+                L['setting_exclusion_list_label']
+            ).info(L['setting_exclusion_list_info']),
             "gpr_ignore_tags": shared.OptionInfo(
-                "", "Игнорируемые теги (не показывать)", gr.Textbox
-            ).info("Укажите теги, которые будут удалены из результата (не влияют на поиск). Через запятую, можно с пробелами или подчёркиваниями."),
+                "", L['setting_ignore_tags_label'], gr.Textbox
+            ).info(L['setting_ignore_tags_info']),
             "gpr_language": shared.OptionInfo(
-                "ru", "Язык интерфейса / Interface language",
+                "en", L['setting_language_label'],
                 gr.Radio,
                 component_args={"choices": ["ru", "en"]}
             ),
             "gpr_proxy_enabled": shared.OptionInfo(
-                False, "Включить прокси"
+                False, L['setting_proxy_enabled_label']
             ),
             "gpr_proxy_url": shared.OptionInfo(
-                "", "URL прокси (например, http://user:pass@host:port)", gr.Textbox
+                "", L['setting_proxy_url_label'], gr.Textbox
             ),
         }
 
