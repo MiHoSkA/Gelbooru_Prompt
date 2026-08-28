@@ -1,6 +1,18 @@
 # Gelbooru-Prompt
-Stable Diffusion - Получение случайного промта или напрямую по нужному посту из Gelbooru.com.
+Stable Diffusion - Получение случайного промта или напрямую по нужному посту из Gelbooru.com
 
 Для того чтобы возможно было адекватно получить промт с Gelbooru в вашем Stable Diffusion, увы но вам нужен любой VPN, так как Gelbooru не совсем уж доступен в России!
 
-Если у вас имеется в наличии HTTP-Прокси, вы можете подключить его в настройках и расширение будет работать через ваш прокси.
+Не забудьте указать в настройках, (API ключ) и (ID пользователя) из вашего аккаунта: https://gelbooru.com (ЭТО ОБЯЗАТЕЛЬНО)
+
+Если у вас имеется в наличии HTTP-Прокси, вы можете подключить его в настройках и расширение будет работать через ваш прокси
+
+⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘
+
+Stable Diffusion - Getting a random prompt or directly from the required post Gelbooru.com
+
+If Gelbooru is not available in your country, run a VPN so that everything works correctly in Stable Diffusion
+
+Don’t forget to specify the (API key) and (user ID) from your account in the settings: https://gelbooru.com (THIS IS MANDATORY)
+
+If you have an HTTP proxy available, you can enable it in the settings, and the extension will work through your proxy
