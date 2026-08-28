@@ -2,7 +2,7 @@
   
 # <a href="https://github.com/MiHoSkA/Gelbooru_Prompt/tree/Stable-Diffusion">Gelbooru-Prompt</a>
 
-**Stable Diffusion** - Получение случайного промта или напрямую по нужному посту из **Gelbooru**
+**[Stable Diffusion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui)** - Получение случайного промта или напрямую по нужному посту из **Gelbooru**
 
 Для того чтобы возможно было адекватно получить промт с Gelbooru в вашем Stable Diffusion, увы но вам нужен любой VPN, так как Gelbooru не совсем уж доступен в России!
 
@@ -12,7 +12,7 @@
 
 **⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘⫘**
 
-**Stable Diffusion** - Getting a random prompt or directly from the required post **Gelbooru**
+**[Stable Diffusion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui)** - Getting a random prompt or directly from the required post **Gelbooru**
 
 If Gelbooru is not available in your country, run a VPN so that everything works correctly in Stable Diffusion
 
