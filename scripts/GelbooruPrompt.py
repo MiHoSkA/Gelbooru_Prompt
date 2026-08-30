@@ -129,29 +129,34 @@ def _get_proxy():
         return None
     return url
 
-async def fetch_image(session, url, timeout=60):
+async def fetch_image(session, url, timeout=60, retries=3):
     headers = {
         'Referer': 'https://gelbooru.com/'
     }
     proxy_url = _get_proxy()
-    try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout),
-                               proxy=proxy_url) as resp:
-            if resp.status == 200:
-                data = await resp.read()
-                img = Image.open(io.BytesIO(data))
-                if img.mode == 'RGBA':
-                    img = img.convert('RGB')
-                return np.array(img)
-            else:
-                print(f"Не удалось загрузить изображение: {resp.status}")
-                return None
-    except asyncio.TimeoutError:
-        print(f"Таймаут загрузки изображения: {url}")
-        return None
-    except Exception as e:
-        print(f"Ошибка при загрузке изображения: {e}")
-        return None
+    for attempt in range(retries):
+        try:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout),
+                                   proxy=proxy_url) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    img = Image.open(io.BytesIO(data))
+                    if img.mode == 'RGBA':
+                        img = img.convert('RGB')
+                    return np.array(img)
+                else:
+                    print(f"Не удалось загрузить изображение (статус {resp.status}): {url}")
+                    if resp.status in (404, 403):
+                        return None
+        except asyncio.TimeoutError:
+            print(f"Таймаут загрузки изображения (попытка {attempt+1}/{retries}): {url}")
+            if attempt < retries - 1:
+                await asyncio.sleep(2)
+        except Exception as e:
+            print(f"Ошибка при загрузке изображения (попытка {attempt+1}/{retries}): {e}")
+            if attempt < retries - 1:
+                await asyncio.sleep(2)
+    return None
 
 def filter_tags(tags, ignore_list):
     if not ignore_list:
