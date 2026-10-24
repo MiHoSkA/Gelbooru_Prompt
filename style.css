@@ -1,0 +1,21 @@
+.gpr-secret-toggle {
+    align-self: flex-end;
+    margin-top: 0.25rem;
+    padding: 0.35rem 0.8rem;
+    border: 1px solid var(--button-secondary-border-color, var(--border-color-primary, #64748b));
+    border-radius: var(--button-small-radius, 6px);
+    background: var(--button-secondary-background-fill, var(--background-fill-secondary, #e2e8f0));
+    color: var(--button-secondary-text-color, var(--body-text-color, #0f172a));
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.gpr-secret-toggle:hover {
+    background: var(--button-secondary-background-fill-hover, var(--background-fill-primary, #cbd5e1));
+}
+
+.gpr-secret-toggle:focus-visible {
+    outline: 2px solid var(--color-accent, #3b82f6);
+    outline-offset: 2px;
+}

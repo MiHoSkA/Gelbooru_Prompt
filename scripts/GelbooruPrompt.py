@@ -1,19 +1,21 @@
 import asyncio
-import contextlib
 import io
 import json
 import os
 import re
+import tempfile
+import threading
+import warnings
+from urllib.parse import parse_qs, urlsplit
+
 import aiohttp
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 import gradio as gr
 from modules import scripts, shared, script_callbacks
-from scripts.Gel import Gelbooru, GelbooruException, GelbooruNotFoundException
+from scripts.Gel import Gelbooru, GelbooruException, GelbooruNotFoundException, get_proxy
 
-LOCALE = {
-    'ru': {
-        'title': 'Gelbooru',
+LOCALE = {'ru': {'title': 'Gelbooru',
         'accordion_random': 'Случайный пост',
         'accordion_load': 'Загрузить пост по ссылке или ID',
         'label_include': 'Включить теги',
@@ -32,30 +34,49 @@ LOCALE = {
         'error_525': 'Сайт Gelbooru временно недоступен (ошибка 525). Попробуйте позже.',
         'error_gelbooru': 'Ошибка при обращении к Gelbooru: ',
         'error_unexpected': 'Непредвиденная ошибка: ',
-        'error_no_new': 'Все доступные посты с такими тегами уже были показаны. Попробуйте другие теги или очистите список просмотренных.',
+        'error_no_new': 'Все доступные посты с такими тегами уже были показаны. Попробуйте другие теги.',
         'error_post_not_found': 'Пост не найден',
-        'error_invalid_id': 'Не удалось распознать ID поста. Укажите ссылку вида https://gelbooru.com/index.php?page=post&s=view&id=123456 или просто число',
+        'error_invalid_id': 'Не удалось распознать ID поста. Укажите ссылку вида '
+                            'https://gelbooru.com/index.php?page=post&s=view&id=123456 или просто число',
         'error_post_not_found_id': 'Пост с ID {id} не найден',
-        'error_gelbooru_blocked': 'Не возможно получить доступ к gelbooru.com, если вы из России, вам нужно включить желательно VPN ! Так как данная платформа не доступна на территории российской федерации! Если вы не из России и видите это сообщение то это означает что данная платформа не доступна и в вашей стране и вам тоже нужно включить VPN! Если не помогает VPN, это означает что на данный момент проблемы на стороне самого сервиса Gelbooru !',
+        'error_gelbooru_blocked': 'Не возможно получить доступ к gelbooru.com, если вы из России, вам нужно включить '
+                                  'желательно VPN ! Так как данная платформа не доступна на территории российской '
+                                  'федерации! Если вы не из России и видите это сообщение то это означает что данная '
+                                  'платформа не доступна и в вашей стране и вам тоже нужно включить VPN! Если не '
+                                  'помогает VPN, это означает что на данный момент проблемы на стороне самого сервиса '
+                                  'Gelbooru !',
+        'error_video_preview': 'У этого видео нет подходящего статичного превью; теги и ссылка на пост получены.',
         'success': 'Успешно',
         'placeholder_include': 'например: 1girl, blue_hair, solo',
         'placeholder_exclude': 'например: nsfw, text, watermark',
         'placeholder_post_input': 'https://gelbooru.com/index.php?page=post&s=view&id=123456 или просто 123456',
         'setting_api_key_label': 'API ключ',
-        'setting_api_key_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" target="_blank">Настройки аккаунта</a>',
+        'setting_api_key_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" '
+                                'target="_blank">Настройки аккаунта</a>',
         'setting_user_id_label': 'ID пользователя',
-        'setting_user_id_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" target="_blank">Настройки аккаунта</a>',
-        'setting_replace_underscores_label': 'Заменять подчёркивания на пробелы при вставке',
+        'setting_user_id_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" '
+                                'target="_blank">Настройки аккаунта</a>',
+        'setting_replace_underscores_label': 'Заменять подчёркивания на пробелы в полученных тегах',
         'setting_exclusion_list_label': 'Список исключений для замены подчёркиваний',
-        'setting_exclusion_list_info': 'Укажите теги, в которых не нужно заменять подчёркивания на пробелы, через запятую.',
+        'setting_exclusion_list_info': 'Укажите теги, в которых не нужно заменять подчёркивания на пробелы, через '
+                                       'запятую.',
         'setting_ignore_tags_label': 'Игнорируемые теги (не показывать)',
-        'setting_ignore_tags_info': 'Укажите теги, которые будут удалены из результата (не влияют на поиск). Через запятую, можно с пробелами или подчёркиваниями.',
-        'setting_language_label': 'Язык интерфейса / Interface language',
+        'setting_ignore_tags_info': 'Укажите теги, которые будут удалены из результата (не влияют на поиск). Через '
+                                    'запятую, можно с пробелами или подчёркиваниями.',
+        'setting_language_label': 'Язык интерфейса',
         'setting_proxy_enabled_label': 'Включить прокси',
         'setting_proxy_url_label': 'URL прокси (например, http://user:pass@host:port)',
-    },
-    'en': {
-        'title': 'Gelbooru',
+        'error_preview': 'Превью недоступно; теги и ссылка на пост получены.',
+        'error_proxy': 'Проверьте настройки включённого HTTP/HTTPS прокси.',
+        'warning_history': 'Не удалось сохранить историю просмотренных постов на диск.',
+        'setting_universal_blacklist_label': 'Универсальный чёрный список',
+        'setting_universal_blacklist_info': 'Теги через запятую: исключаются из поиска и удаляются из всех '
+                                            'результатов.',
+        'setting_display_all_content_label': 'Показывать весь контент',
+        'setting_display_all_content_info': 'По умолчанию выключено. Запрашивает контент, скрытый фильтрами аккаунта '
+                                            'Gelbooru.',
+        'setting_language_info': 'После применения настроек перезагрузите интерфейс, чтобы обновить все подписи.'},
+ 'en': {'title': 'Gelbooru',
         'accordion_random': 'Random Post',
         'accordion_load': 'Load Post by URL or ID',
         'label_include': 'Include tags',
@@ -74,237 +95,416 @@ LOCALE = {
         'error_525': 'Gelbooru is temporarily unavailable (error 525). Please try again later.',
         'error_gelbooru': 'Error while accessing Gelbooru: ',
         'error_unexpected': 'Unexpected error: ',
-        'error_no_new': 'All available posts with these tags have already been shown. Try different tags or clear the seen list.',
+        'error_no_new': 'All available posts with these tags have already been shown. Try different tags.',
         'error_post_not_found': 'Post not found',
-        'error_invalid_id': 'Could not parse post ID. Provide a link like https://gelbooru.com/index.php?page=post&s=view&id=123456 or just the number',
+        'error_invalid_id': 'Could not parse post ID. Provide a link like '
+                            'https://gelbooru.com/index.php?page=post&s=view&id=123456 or just the number',
         'error_post_not_found_id': 'Post with ID {id} not found',
-        'error_gelbooru_blocked': 'Cannot access gelbooru.com. If you are from Russia, please enable VPN, as this platform is blocked in the Russian Federation. If you are not from Russia and see this message, it means the platform is also unavailable in your country, please enable VPN. If VPN does not help, it means there are issues on Gelbooru\'s side.',
+        'error_gelbooru_blocked': 'Cannot access gelbooru.com. If you are from Russia, please enable VPN, as this '
+                                  'platform is blocked in the Russian Federation. If you are not from Russia and see '
+                                  'this message, it means the platform is also unavailable in your country, please '
+                                  "enable VPN. If VPN does not help, it means there are issues on Gelbooru's side.",
+        'error_video_preview': 'This video has no supported still preview; the tags and post URL are ready.',
         'success': 'Success',
         'placeholder_include': 'e.g. 1girl, blue_hair, solo',
         'placeholder_exclude': 'e.g. nsfw, text, watermark',
         'placeholder_post_input': 'https://gelbooru.com/index.php?page=post&s=view&id=123456 or just 123456',
         'setting_api_key_label': 'API key',
-        'setting_api_key_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" target="_blank">Account settings</a>',
+        'setting_api_key_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" '
+                                'target="_blank">Account settings</a>',
         'setting_user_id_label': 'User ID',
-        'setting_user_id_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" target="_blank">Account settings</a>',
-        'setting_replace_underscores_label': 'Replace underscores with spaces on insert',
+        'setting_user_id_info': '<a href="https://gelbooru.com/index.php?page=account&s=options" '
+                                'target="_blank">Account settings</a>',
+        'setting_replace_underscores_label': 'Replace underscores with spaces in fetched tags',
         'setting_exclusion_list_label': 'Exclusion list for underscore replacement',
-        'setting_exclusion_list_info': 'Specify tags where underscores should NOT be replaced with spaces, separated by commas.',
+        'setting_exclusion_list_info': 'Specify tags where underscores should NOT be replaced with spaces, separated '
+                                       'by commas.',
         'setting_ignore_tags_label': 'Ignored tags (do not show)',
-        'setting_ignore_tags_info': 'Specify tags to remove from the result (does not affect search). Separated by commas, with spaces or underscores allowed.',
-        'setting_language_label': 'Язык интерфейса / Interface language',
+        'setting_ignore_tags_info': 'Specify tags to remove from the result (does not affect search). Separated by '
+                                    'commas, with spaces or underscores allowed.',
+        'setting_language_label': 'Interface language',
         'setting_proxy_enabled_label': 'Enable proxy',
         'setting_proxy_url_label': 'Proxy URL (e.g., http://user:pass@host:port)',
-    }
-}
+        'error_preview': 'Preview is unavailable; the tags and post URL are ready.',
+        'error_proxy': 'Check the enabled HTTP/HTTPS proxy settings.',
+        'warning_history': 'The viewed history could not be saved to disk.',
+        'setting_universal_blacklist_label': 'Universal blacklist',
+        'setting_universal_blacklist_info': 'Comma-separated tags excluded from searches and removed from all results.',
+        'setting_display_all_content_label': 'Display all content',
+        'setting_display_all_content_info': 'Disabled by default. Requests content otherwise hidden by Gelbooru '
+                                            'account filters.',
+        'setting_language_info': 'After applying settings, use Reload UI to update all labels.'}}
+
+LOCALE["en"].update({"error_no_static": "No post with a supported static preview was found in 8 attempts.", "error_rate_limit": "Gelbooru rate limit reached. Please try again later."})
+LOCALE["ru"].update({"error_no_static": "За 8 попыток не найден пост с подходящим статичным превью.", "error_rate_limit": "Превышен лимит запросов Gelbooru. Повторите попытку позже."})
 
 SEEN_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "seen_posts.json")
+SEEN_LOCK = threading.RLock()
+SESSION_SEEN = set()
+ANIMATED_IMAGE = object()
+PREVIEW_PENDING = object()
+CALLBACK_TIMEOUT = 60
+MAX_RANDOM_ATTEMPTS = 8
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_IMAGE_PIXELS = 32_000_000
+MAX_IMAGE_SIDE = 8192
 
-def load_seen_ids():
-    if os.path.exists(SEEN_FILE):
-        try:
-            with open(SEEN_FILE, 'r') as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return set(data)
-        except Exception:
-            pass
+
+def _locale():
+    language = getattr(shared.opts, "gpr_language", "en")
+    return LOCALE.get(language if isinstance(language, str) else "en", LOCALE["en"])
+
+
+def _tags(value):
+    if isinstance(value, str):
+        values = value.split(",")
+    elif isinstance(value, (list, tuple, set)):
+        values = value
+    elif value is None:
+        values = []
+    else:
+        values = [value]
+    result = []
+    for item in values:
+        tag = re.sub(r"\s+", "_", str(item).strip()) if item is not None else ""
+        if tag and tag not in result:
+            result.append(tag)
+    return result
+
+
+def _post_id(value):
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    text = str(value).strip()
+    if not re.fullmatch(r"[0-9]{1,20}", text):
+        return None
+    number = int(text)
+    return number if number > 0 else None
+
+
+def _parse_post_input(value):
+    text = str(value or "").strip()
+    post_id = _post_id(text)
+    if post_id is not None:
+        return post_id
+    try:
+        url = urlsplit(text)
+        if (url.scheme.lower() not in ("http", "https")
+                or (url.hostname or "").lower() not in ("gelbooru.com", "www.gelbooru.com")
+                or url.username or url.password
+                or url.port not in (None, 80, 443)
+                or url.path not in ("", "/", "/index.php")):
+            return None
+        ids = parse_qs(url.query, keep_blank_values=True).get("id", [])
+        return _post_id(ids[0]) if len(ids) == 1 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_seen_ids():
+    try:
+        with open(SEEN_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        if isinstance(data, list):
+            return {number for value in data if (number := _post_id(value)) is not None}
+    except (OSError, ValueError, TypeError):
+        pass
     return set()
 
-def save_seen_ids(ids):
+
+def load_seen_ids():
+    with SEEN_LOCK:
+        return _read_seen_ids() | SESSION_SEEN
+
+
+def _write_seen_ids(ids):
+    temporary = None
     try:
-        with open(SEEN_FILE, 'w') as f:
-            json.dump(list(ids), f)
-    except Exception as e:
-        print(f"Ошибка сохранения просмотренных постов: {e}")
+        folder = os.path.dirname(os.path.abspath(SEEN_FILE))
+        os.makedirs(folder, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=folder,
+                                         prefix=".seen_posts-", suffix=".json", delete=False) as file:
+            temporary = file.name
+            json.dump(sorted(ids), file)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, SEEN_FILE)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+    finally:
+        if temporary is not None and os.path.exists(temporary):
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+
+
+def save_seen_ids(ids):
+    with SEEN_LOCK:
+        normalized = {number for value in ids if (number := _post_id(value)) is not None}
+        merged = _read_seen_ids() | SESSION_SEEN | normalized
+        SESSION_SEEN.update(merged)
+        return _write_seen_ids(merged)
+
+
+def _claim_seen(post_id):
+    with SEEN_LOCK:
+        if post_id in _read_seen_ids() | SESSION_SEEN:
+            return False, True
+        return True, save_seen_ids({post_id})
+
 
 def _get_proxy():
-    if not getattr(shared.opts, 'gpr_proxy_enabled', False):
-        return None
-    url = getattr(shared.opts, 'gpr_proxy_url', '').strip()
-    if not url:
-        return None
-    if url.startswith('socks5://'):
-        print("SOCKS5 прокси не поддерживается, используйте HTTP/HTTPS.")
-        return None
-    return url
+    return get_proxy()
 
-async def fetch_image(session, url, timeout=60, retries=3):
-    headers = {
-        'Referer': 'https://gelbooru.com/'
-    }
-    proxy_url = _get_proxy()
-    for attempt in range(retries):
+
+def _image_url(value):
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if value.startswith("//"):
+        value = "https:" + value
+    try:
+        url = urlsplit(value)
+        if (url.scheme.lower() not in ("http", "https") or not url.hostname
+                or url.username or url.password
+                or any(char.isspace() or ord(char) < 32 for char in value)):
+            return None
+        url.port
+    except ValueError:
+        return None
+    return value
+
+
+def is_video_url(url):
+    if not isinstance(url, str):
+        return False
+    extensions = (".mp4", ".webm", ".mov", ".avi", ".m4v", ".gifv", ".mpeg", ".mpg", ".m3u8")
+    try:
+        return urlsplit(url).path.lower().endswith(extensions)
+    except ValueError:
+        return False
+
+
+def _decode_image(data):
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(data)) as image:
+                if (image.width < 1 or image.height < 1
+                        or image.width > MAX_IMAGE_SIDE or image.height > MAX_IMAGE_SIDE
+                        or image.width * image.height > MAX_IMAGE_PIXELS):
+                    return None
+                if getattr(image, "is_animated", False):
+                    return ANIMATED_IMAGE
+                image = ImageOps.exif_transpose(image)
+                return np.array(image.convert("RGB"), copy=True)
+    except Exception:
+        return None
+
+
+async def fetch_image(session, url, timeout=60, retries=2, state=None):
+    url = _image_url(url)
+    if not url or is_video_url(url):
+        return None
+    try:
+        duration = min(float(timeout), CALLBACK_TIMEOUT)
+        attempts = min(max(int(retries), 1), 3)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not 0 < duration <= CALLBACK_TIMEOUT:
+        return None
+    proxy = get_proxy()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + duration
+    for _ in range(attempts):
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return None
         try:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout),
-                                   proxy=proxy_url) as resp:
-                if resp.status == 200:
-                    data = await resp.read()
-                    img = Image.open(io.BytesIO(data))
-                    if img.mode == 'RGBA':
-                        img = img.convert('RGB')
-                    return np.array(img)
-                else:
-                    print(f"Не удалось загрузить изображение (статус {resp.status}): {url}")
-                    if resp.status in (404, 403):
+            async with session.get(url, headers={"Referer": "https://gelbooru.com/"},
+                                   timeout=aiohttp.ClientTimeout(total=remaining), proxy=proxy) as response:
+                if response.status != 200:
+                    if response.status in (400, 401, 403, 404):
                         return None
-        except asyncio.TimeoutError:
-            print(f"Таймаут загрузки изображения (попытка {attempt+1}/{retries}): {url}")
-            if attempt < retries - 1:
-                await asyncio.sleep(2)
-        except Exception as e:
-            print(f"Ошибка при загрузке изображения (попытка {attempt+1}/{retries}): {e}")
-            if attempt < retries - 1:
-                await asyncio.sleep(2)
+                    continue
+                size = response.content_length
+                if size is not None and size > MAX_IMAGE_BYTES:
+                    return None
+                data = bytearray()
+                async for chunk in response.content.iter_chunked(65536):
+                    if len(data) + len(chunk) > MAX_IMAGE_BYTES:
+                        return None
+                    data.extend(chunk)
+                remaining = deadline - loop.time()
+                if not data or remaining <= 0:
+                    return None
+                decoded = await asyncio.wait_for(asyncio.to_thread(_decode_image, bytes(data)), min(5, remaining))
+                if decoded is ANIMATED_IMAGE:
+                    if state is not None:
+                        state["animated"] = True
+                    return None
+                return decoded
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            if deadline - loop.time() <= 0:
+                return None
+        except Exception:
+            return None
     return None
 
+
 def filter_tags(tags, ignore_list):
-    if not ignore_list:
-        return tags
-    ignore_normalized = []
-    for tag in ignore_list:
-        tag = tag.strip().lower().replace(' ', '_')
-        if tag:
-            ignore_normalized.append(tag)
-    return [tag for tag in tags if tag.lower().replace(' ', '_') not in ignore_normalized]
+    ignored = {tag.casefold() for tag in _tags(ignore_list)}
+    return [tag for tag in _tags(tags) if tag.casefold() not in ignored]
 
-async def get_random_tags(include, exclude):
-    lang = getattr(shared.opts, 'gpr_language', 'en')
-    L = LOCALE[lang]
 
-    include = include.replace(" ", "")
-    exclude = exclude.replace(" ", "")
-    api_key = getattr(shared.opts, "gpr_api_key", None)
-    user_id = getattr(shared.opts, "gpr_user_id", None)
-    ignore_tags_raw = getattr(shared.opts, "gpr_ignore_tags", "")
-    ignore_list = [t.strip() for t in ignore_tags_raw.split(',')] if ignore_tags_raw else []
+def _result_tags(post):
+    raw = post.get_tags()
+    raw = raw.split() if isinstance(raw, str) else raw
+    ignored = _tags(getattr(shared.opts, "gpr_ignore_tags", ""))
+    ignored += _tags(getattr(shared.opts, "gpr_universalBlacklist", ""))
+    tags = filter_tags(raw, ignored)
+    if getattr(shared.opts, "gpr_replaceUnderscores", True):
+        exclusions = {tag.casefold() for tag in _tags(getattr(shared.opts, "gpr_undersocreReplacementExclusionList", ""))}
+        tags = [tag if tag.casefold() in exclusions else tag.replace("_", " ") for tag in tags]
+    return ", ".join(tags)
 
-    if not api_key or not user_id:
-        return L['error_auth'], None, L['error_post_not_found']
 
-    if include == "":
-        include = None
-    else:
-        include = include.split(',')
+def _error_status(error, locale):
+    if isinstance(error, asyncio.TimeoutError):
+        return locale["error_timeout"]
+    message = str(error)
+    if re.search(r"\b(?:401|403)\b", message):
+        return locale["error_auth"]
+    if re.search(r"\b429\b", message):
+        return locale["error_rate_limit"]
+    if re.search(r"\b525\b", message):
+        return locale["error_525"]
+    if isinstance(error, GelbooruException):
+        return locale["error_gelbooru"].rstrip(" :")
+    if isinstance(error, aiohttp.ClientError):
+        return locale["error_gelbooru"].rstrip(" :")
+    return locale["error_unexpected"].rstrip(" :")
 
-    if exclude == "":
-        exclude = None
-    else:
-        exclude = exclude.split(',')
 
-    seen_ids = load_seen_ids()
-    max_attempts = 20
-    attempt = 0
-    gel_post = None
-
-    while attempt < max_attempts:
-        try:
-            gel_post = await Gelbooru(api_key=api_key, user_id=user_id, timeout=60).random_post(tags=include, exclude_tags=exclude)
-            if gel_post is None:
-                return L['error_no_post'], None, L['error_post_not_found']
-            if gel_post.id not in seen_ids:
-                break
-        except asyncio.TimeoutError:
-            return L['error_timeout'], None, L['error_post_not_found']
-        except GelbooruException as e:
-            if "525" in str(e):
-                return L['error_525'], None, L['error_post_not_found']
-            else:
-                return f"{L['error_gelbooru']}{e}", None, L['error_post_not_found']
-        except Exception as e:
-            error_msg = str(e)
-            if "Cannot connect to host gelbooru.com" in error_msg or "WRONG_VERSION_NUMBER" in error_msg:
-                return L['error_gelbooru_blocked'], None, L['error_post_not_found']
-            return f"{L['error_unexpected']}{e}", None, L['error_post_not_found']
-        attempt += 1
-
-    if gel_post is None:
-        return L['error_no_post'], None, L['error_post_not_found']
-
-    if attempt == max_attempts and gel_post.id in seen_ids:
-        return L['error_no_new'], None, L['error_post_not_found']
-
-    seen_ids.add(gel_post.id)
-    save_seen_ids(seen_ids)
-
-    raw_tags = gel_post.get_tags()
-    filtered_raw = filter_tags(raw_tags, ignore_list)
-    final_tags = []
-    for tag in filtered_raw:
-        if getattr(shared.opts, "gpr_replaceUnderscores", True):
-            exclusion_list = getattr(shared.opts, "gpr_undersocreReplacementExclusionList", "").split(',')
-            if tag not in exclusion_list:
-                tag = tag.replace("_", " ")
-        final_tags.append(tag)
-
-    preview = None
+async def _preview(post, deadline, state=None):
+    candidates = []
+    for attribute in ("sample_url", "preview_url", "file_url"):
+        candidate = _image_url(getattr(post, attribute, None))
+        if candidate and not is_video_url(candidate) and candidate not in candidates:
+            candidates.append(candidate)
     async with aiohttp.ClientSession() as session:
-        preview = await fetch_image(session, gel_post.file_url, timeout=60)
+        for candidate in candidates:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None
+            preview = await fetch_image(session, candidate, timeout=min(12, remaining), retries=1, state=state)
+            if preview is not None:
+                return preview
+    return None
 
-    return ', '.join(final_tags), preview, str(gel_post)
 
-async def get_post_by_url(post_input):
-    lang = getattr(shared.opts, 'gpr_language', 'en')
-    L = LOCALE[lang]
-
-    api_key = getattr(shared.opts, "gpr_api_key", None)
-    user_id = getattr(shared.opts, "gpr_user_id", None)
-    ignore_tags_raw = getattr(shared.opts, "gpr_ignore_tags", "")
-    ignore_list = [t.strip() for t in ignore_tags_raw.split(',')] if ignore_tags_raw else []
-
-    if not api_key or not user_id:
-        return L['error_auth'], None, None, L['error_post_not_found']
-
-    post_id = None
-    match = re.search(r'id=(\d+)', post_input)
-    if match:
-        post_id = int(match.group(1))
-    else:
-        if post_input.isdigit():
-            post_id = int(post_input)
-
+async def _post_result(post, deadline, state, locale, history_saved=True, preview=PREVIEW_PENDING):
+    post_id = _post_id(getattr(post, "id", None))
     if post_id is None:
-        return L['error_invalid_id'], None, None, L['error_post_not_found']
+        return "", None, "", locale["error_no_post"]
+    tags = _result_tags(post)
+    post_url = f"https://gelbooru.com/index.php?page=post&s=view&id={post_id}"
+    state.update(tags=tags, url=post_url)
+    if preview is PREVIEW_PENDING:
+        preview = await _preview(post, deadline)
+    if preview is not None:
+        status = locale["success"]
+    elif is_video_url(getattr(post, "file_url", None)):
+        status = locale["error_video_preview"]
+    else:
+        status = locale["error_preview"]
+    if not history_saved:
+        status += " " + locale["warning_history"]
+    return tags, preview, post_url, status
+
+
+async def _request_result(include=None, exclude=None, post_input=None, manual=False):
+    locale = _locale()
+    key = str(getattr(shared.opts, "gpr_api_key", "") or "").strip()
+    user_id = _post_id(getattr(shared.opts, "gpr_user_id", None))
+    if not key or user_id is None:
+        return "", None, "", locale["error_auth"]
+    try:
+        get_proxy()
+    except Exception:
+        return "", None, "", locale["error_proxy"]
+    selected_id = _parse_post_input(post_input) if manual else None
+    if manual and selected_id is None:
+        return "", None, "", locale["error_invalid_id"]
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + CALLBACK_TIMEOUT
+    state = {}
+
+    async def request():
+        client = Gelbooru(api_key=key, user_id=str(user_id), timeout=CALLBACK_TIMEOUT,
+                          display_all_content=getattr(shared.opts, "gpr_displayAllContent", False) is True)
+        if manual:
+            post = await client.get_post(selected_id)
+            if post is None:
+                return "", None, "", locale["error_post_not_found_id"].format(id=selected_id)
+            return await _post_result(post, deadline, state, locale)
+        included = _tags(include)
+        excluded = _tags(exclude) + _tags(getattr(shared.opts, "gpr_universalBlacklist", ""))
+        excluded = list(dict.fromkeys(excluded))
+        unusable = 0
+        for _ in range(MAX_RANDOM_ATTEMPTS):
+            post = await client.random_post(tags=included or None, exclude_tags=excluded or None)
+            if post is None:
+                return "", None, "", locale["error_no_post"]
+            post_id = _post_id(getattr(post, "id", None))
+            if post_id is None or post_id in await asyncio.to_thread(load_seen_ids):
+                continue
+            video = is_video_url(getattr(post, "file_url", None))
+            still_candidates = [candidate for attribute in ("sample_url", "preview_url")
+                                if (candidate := _image_url(getattr(post, attribute, None))) and not is_video_url(candidate)]
+            if video and not still_candidates:
+                unusable += 1
+                continue
+            preview_state = {}
+            if not video:
+                state.update(tags=_result_tags(post), url=f"https://gelbooru.com/index.php?page=post&s=view&id={post_id}")
+            preview = await _preview(post, deadline, preview_state)
+            if preview is None and (video or preview_state.get("animated")):
+                state.clear()
+                unusable += 1
+                continue
+            claimed, saved = await asyncio.to_thread(_claim_seen, post_id)
+            if claimed:
+                return await _post_result(post, deadline, state, locale, saved, preview)
+            state.clear()
+        return "", None, "", locale["error_no_static"] if unusable else locale["error_no_new"]
 
     try:
-        gel_post = await Gelbooru(api_key=api_key, user_id=user_id, timeout=60).get_post(post_id)
-    except asyncio.TimeoutError:
-        return L['error_timeout'], None, None, L['error_post_not_found']
+        return await asyncio.wait_for(request(), timeout=CALLBACK_TIMEOUT)
     except GelbooruNotFoundException:
-        return L['error_post_not_found_id'].format(id=post_id), None, None, L['error_post_not_found']
-    except GelbooruException as e:
-        if "525" in str(e):
-            return L['error_525'], None, None, L['error_post_not_found']
-        else:
-            return f"{L['error_gelbooru']}{e}", None, None, L['error_post_not_found']
-    except Exception as e:
-        error_msg = str(e)
-        if "Cannot connect to host gelbooru.com" in error_msg or "WRONG_VERSION_NUMBER" in error_msg:
-            return L['error_gelbooru_blocked'], None, None, L['error_post_not_found']
-        return f"{L['error_unexpected']}{e}", None, None, L['error_post_not_found']
+        return "", None, "", locale["error_post_not_found_id"].format(id=selected_id) if manual else locale["error_no_post"]
+    except Exception as error:
+        if state.get("url"):
+            return state["tags"], None, state["url"], locale["error_preview"]
+        return "", None, "", _error_status(error, locale)
 
-    raw_tags = gel_post.get_tags()
-    filtered_raw = filter_tags(raw_tags, ignore_list)
-    final_tags = []
-    for tag in filtered_raw:
-        if getattr(shared.opts, "gpr_replaceUnderscores", True):
-            exclusion_list = getattr(shared.opts, "gpr_undersocreReplacementExclusionList", "").split(',')
-            if tag not in exclusion_list:
-                tag = tag.replace("_", " ")
-        final_tags.append(tag)
 
-    preview = None
-    async with aiohttp.ClientSession() as session:
-        preview = await fetch_image(session, gel_post.file_url, timeout=60)
+async def get_random_tags_with_status(include, exclude):
+    return await _request_result(include=include, exclude=exclude)
 
-    post_url = str(gel_post)
-    return ', '.join(final_tags), preview, post_url, L['success']
+
+async def get_random_tags(include, exclude):
+    tags, preview, post_url, status = await get_random_tags_with_status(include, exclude)
+    return tags if post_url else status, preview, post_url or _locale()["error_post_not_found"]
+
+
+async def get_post_by_url(post_input):
+    return await _request_result(post_input=post_input, manual=True)
+
 
 class GPRScript(scripts.Script):
-
-    def __init__(self) -> None:
-        super().__init__()
-
     def title(self):
         return "Gelbooru Prompt"
 
@@ -312,103 +512,58 @@ class GPRScript(scripts.Script):
         return scripts.AlwaysVisible
 
     def ui(self, is_img2img):
-        lang = getattr(shared.opts, 'gpr_language', 'en')
-        L = LOCALE[lang]
-
-        with gr.Accordion(L['title'], open=False):
-            with gr.Accordion(L['accordion_random'], open=True):
-                include_tags_textbox = gr.Textbox(label=L['label_include'], placeholder=L['placeholder_include'])
-                exclude_tags_textbox = gr.Textbox(label=L['label_exclude'], placeholder=L['placeholder_exclude'])
-
+        locale = _locale()
+        with gr.Accordion(locale["title"], open=False):
+            with gr.Accordion(locale["accordion_random"], open=True):
+                include_tags_textbox = gr.Textbox(label=locale["label_include"], placeholder=locale["placeholder_include"])
+                exclude_tags_textbox = gr.Textbox(label=locale["label_exclude"], placeholder=locale["placeholder_exclude"])
                 with gr.Row():
-                    send_text_button = gr.Button(value=L['button_random'], variant='primary', size='sm')
-                    clear_button = gr.Button(value=L['button_clear'], size='sm')
-
-                result_tags_textbox = gr.Textbox(label=L['label_tags'], show_copy_button=True, interactive=False)
+                    random_button = gr.Button(value=locale["button_random"], variant="primary", size="sm")
+                    clear_button = gr.Button(value=locale["button_clear"], size="sm")
+                result_tags_textbox = gr.Textbox(label=locale["label_tags"], show_copy_button=True, interactive=False)
                 preview_image = gr.Image(interactive=False, show_label=False, height=400)
-                url_textbox = gr.Textbox(label=L['label_url'], show_copy_button=True, interactive=False)
-
-            with gr.Accordion(L['accordion_load'], open=False):
-                post_input_textbox = gr.Textbox(label=L['label_post_input'], placeholder=L['placeholder_post_input'])
+                url_textbox = gr.Textbox(label=locale["label_url"], show_copy_button=True, interactive=False)
+                status_textbox = gr.Textbox(label=locale["label_status"], interactive=False)
+            with gr.Accordion(locale["accordion_load"], open=False):
+                post_input_textbox = gr.Textbox(label=locale["label_post_input"], placeholder=locale["placeholder_post_input"])
                 with gr.Row():
-                    load_post_button = gr.Button(value=L['button_load'], variant='secondary', size='sm')
-                    clear_manual_button = gr.Button(value=L['button_clear_manual'], size='sm')
-
-                manual_tags_textbox = gr.Textbox(label=L['label_tags'], show_copy_button=True, interactive=False)
+                    load_post_button = gr.Button(value=locale["button_load"], variant="secondary", size="sm")
+                    clear_manual_button = gr.Button(value=locale["button_clear_manual"], size="sm")
+                manual_tags_textbox = gr.Textbox(label=locale["label_tags"], show_copy_button=True, interactive=False)
                 manual_preview_image = gr.Image(interactive=False, show_label=False, height=400)
-                manual_url_textbox = gr.Textbox(label=L['label_url'], show_copy_button=True, interactive=False)
-                manual_status_textbox = gr.Textbox(label=L['label_status'], interactive=False)
-
-        with contextlib.suppress(AttributeError):
-            send_text_button.click(
-                fn=get_random_tags,
-                inputs=[include_tags_textbox, exclude_tags_textbox],
-                outputs=[result_tags_textbox, preview_image, url_textbox]
-            )
-            clear_button.click(
-                fn=lambda: (None, None, None),
-                inputs=None,
-                outputs=[preview_image, url_textbox, result_tags_textbox]
-            )
-
-            load_post_button.click(
-                fn=get_post_by_url,
-                inputs=[post_input_textbox],
-                outputs=[manual_tags_textbox, manual_preview_image, manual_url_textbox, manual_status_textbox]
-            )
-            clear_manual_button.click(
-                fn=lambda: (None, None, None, None),
-                inputs=None,
-                outputs=[manual_tags_textbox, manual_preview_image, manual_url_textbox, manual_status_textbox]
-            )
-
-        return [include_tags_textbox, exclude_tags_textbox, send_text_button, clear_button,
-                result_tags_textbox, preview_image, url_textbox,
-                post_input_textbox, load_post_button, clear_manual_button,
-                manual_tags_textbox, manual_preview_image, manual_url_textbox, manual_status_textbox]
+                manual_url_textbox = gr.Textbox(label=locale["label_url"], show_copy_button=True, interactive=False)
+                manual_status_textbox = gr.Textbox(label=locale["label_status"], interactive=False)
+        random_button.click(fn=get_random_tags_with_status, inputs=[include_tags_textbox, exclude_tags_textbox],
+                            outputs=[result_tags_textbox, preview_image, url_textbox, status_textbox])
+        clear_button.click(fn=lambda: ("", None, "", ""), inputs=[],
+                           outputs=[result_tags_textbox, preview_image, url_textbox, status_textbox])
+        load_post_button.click(fn=get_post_by_url, inputs=[post_input_textbox],
+                               outputs=[manual_tags_textbox, manual_preview_image, manual_url_textbox, manual_status_textbox])
+        clear_manual_button.click(fn=lambda: ("", None, "", ""), inputs=[],
+                                  outputs=[manual_tags_textbox, manual_preview_image, manual_url_textbox, manual_status_textbox])
+        return []
 
     def on_ui_settings():
-        lang = getattr(shared.opts, 'gpr_language', 'en')
-        L = LOCALE[lang]
-
-        GPR_SECTION = ("gpr", "Gelbooru Prompt")
-
-        gpr_options = {
-            "gpr_api_key": shared.OptionInfo(
-                "", L['setting_api_key_label'], gr.Textbox
-            ).info(L['setting_api_key_info']),
-            "gpr_user_id": shared.OptionInfo(
-                "", L['setting_user_id_label'], gr.Textbox
-            ).info(L['setting_user_id_info']),
-            "gpr_replaceUnderscores": shared.OptionInfo(True, L['setting_replace_underscores_label']),
+        locale = _locale()
+        section = ("gpr", "Gelbooru Prompt")
+        options = {
+            "gpr_api_key": shared.OptionInfo("", locale["setting_api_key_label"], gr.Textbox,
+                                               component_args={"type": "password"}, restrict_api=True).info(locale["setting_api_key_info"]),
+            "gpr_user_id": shared.OptionInfo("", locale["setting_user_id_label"], gr.Textbox).info(locale["setting_user_id_info"]),
+            "gpr_replaceUnderscores": shared.OptionInfo(True, locale["setting_replace_underscores_label"]),
             "gpr_undersocreReplacementExclusionList": shared.OptionInfo(
                 "0_0,(o)_(o),+_+,+_-,._.,<o>_<o>,<|>_<|>,=_=,>_<,3_3,6_9,>_o,@_@,^_^,o_o,u_u,x_x,|_|,||_||",
-                L['setting_exclusion_list_label']
-            ).info(L['setting_exclusion_list_info']),
-            "gpr_ignore_tags": shared.OptionInfo(
-                "", L['setting_ignore_tags_label'], gr.Textbox
-            ).info(L['setting_ignore_tags_info']),
-            "gpr_language": shared.OptionInfo(
-                "en", L['setting_language_label'],
-                gr.Radio,
-                component_args={"choices": ["ru", "en"]}
-            ),
-            "gpr_proxy_enabled": shared.OptionInfo(
-                False, L['setting_proxy_enabled_label']
-            ),
-            "gpr_proxy_url": shared.OptionInfo(
-                "", L['setting_proxy_url_label'], gr.Textbox
-            ),
+                locale["setting_exclusion_list_label"]).info(locale["setting_exclusion_list_info"]),
+            "gpr_ignore_tags": shared.OptionInfo("", locale["setting_ignore_tags_label"], gr.Textbox).info(locale["setting_ignore_tags_info"]),
+            "gpr_universalBlacklist": shared.OptionInfo("", locale["setting_universal_blacklist_label"], gr.Textbox).info(locale["setting_universal_blacklist_info"]),
+            "gpr_displayAllContent": shared.OptionInfo(False, locale["setting_display_all_content_label"]).info(locale["setting_display_all_content_info"]),
+            "gpr_language": shared.OptionInfo("en", locale["setting_language_label"], gr.Radio, component_args={"choices": ["ru", "en"]}).info(locale["setting_language_info"]),
+            "gpr_proxy_enabled": shared.OptionInfo(False, locale["setting_proxy_enabled_label"]),
+            "gpr_proxy_url": shared.OptionInfo("", locale["setting_proxy_url_label"], gr.Textbox,
+                                                 component_args={"type": "password"}, restrict_api=True),
         }
-
-        for key, opt in gpr_options.items():
-            opt.section = GPR_SECTION
-            shared.opts.add_option(key, opt)
+        for key, option in options.items():
+            option.section = section
+            shared.opts.add_option(key, option)
 
     script_callbacks.on_ui_settings(on_ui_settings)
-
-    def after_component(self, component, **kwargs):
-        if kwargs.get("elem_id") == "txt2img_prompt":
-            self.text2img = component
-        if kwargs.get("elem_id") == "img2img_prompt":
-            self.img2img = component
